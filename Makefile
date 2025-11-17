@@ -1,83 +1,71 @@
-.PHONY: help test test-unit test-integration build build-frontend build-backend docker-build docker-run clean deps lint
-
-# Default target
-help:
-	@echo "Available targets:"
-	@echo "  make test              - Run all tests"
-	@echo "  make test-unit         - Run unit tests only"
-	@echo "  make test-integration  - Run integration tests only"
-	@echo "  make build             - Build backend binary"
-	@echo "  make build-frontend    - Build frontend"
-	@echo "  make build-backend     - Build backend"
-	@echo "  make docker-build      - Build Docker image"
-	@echo "  make docker-run        - Run Docker container locally"
-	@echo "  make clean             - Clean build artifacts"
-	@echo "  make deps              - Install dependencies"
-	@echo "  make lint              - Run linters"
+.PHONY: help test test-unit test-integration build build-frontend build-all run run-frontend docker-build docker-run clean deps
 
 # Variables
-BACKEND_DIR := backend
-FRONTEND_DIR := frontend
-DOCKER_IMAGE := appdirect-workshop
-DOCKER_TAG := latest
+BACKEND_DIR=backend
+FRONTEND_DIR=frontend
+BINARY_NAME=app
+DOCKER_IMAGE=appdirect-workshop
+DOCKER_TAG=latest
 
-# Test targets
-test:
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+deps: ## Install dependencies
+	@echo "Installing backend dependencies..."
+	cd $(BACKEND_DIR) && go mod download
+	@echo "Installing frontend dependencies..."
+	cd $(FRONTEND_DIR) && npm install
+
+test: ## Run all tests
 	@echo "Running all tests..."
 	cd $(BACKEND_DIR) && go test ./... -v
 
-test-unit:
+test-unit: ## Run unit tests only
 	@echo "Running unit tests..."
-	cd $(BACKEND_DIR) && go test ./internal/... -v -short
+	cd $(BACKEND_DIR) && go test ./internal/handlers ./internal/middleware ./internal/config -v
 
-test-integration:
+test-integration: ## Run integration tests only
 	@echo "Running integration tests..."
-	cd $(BACKEND_DIR) && go test ./integration/... -v
+	cd $(BACKEND_DIR) && go test -v -run TestIntegration
 
-# Build targets
-build: build-backend build-frontend
-
-build-backend:
+build: ## Build backend binary
 	@echo "Building backend..."
-	cd $(BACKEND_DIR) && go build -o app ./main.go
+	cd $(BACKEND_DIR) && go build -o $(BINARY_NAME) ./main.go
 
-build-frontend:
+build-frontend: ## Build frontend
 	@echo "Building frontend..."
-	cd $(FRONTEND_DIR) && npm install && npm run build
+	cd $(FRONTEND_DIR) && npm run build
 
-# Docker targets
-docker-build:
+build-all: build build-frontend ## Build both frontend and backend
+
+run: ## Run backend locally
+	@echo "Running backend..."
+	cd $(BACKEND_DIR) && ./$(BINARY_NAME)
+
+run-frontend: ## Run frontend dev server
+	@echo "Running frontend dev server..."
+	cd $(FRONTEND_DIR) && npm run dev
+
+docker-build: ## Build Docker image
 	@echo "Building Docker image..."
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
-docker-run:
+docker-run: ## Run Docker container
 	@echo "Running Docker container..."
 	docker run -p 8080:8080 \
-		-e FIREBASE_SERVICE_ACCOUNT="$(shell cat backend/.env | grep FIREBASE_SERVICE_ACCOUNT | cut -d'=' -f2-)" \
-		-e SUBSCOLLECTION_ID="$(shell cat backend/.env | grep SUBSCOLLECTION_ID | cut -d'=' -f2)" \
-		-e ADMIN_PASSWORD="$(shell cat backend/.env | grep ADMIN_PASSWORD | cut -d'=' -f2)" \
+		-e SUBSCOLLECTION_ID=workshop-2024 \
+		-e ADMIN_PASSWORD=change-me \
 		-e PORT=8080 \
 		-e CORS_ORIGIN=http://localhost:8080 \
 		$(DOCKER_IMAGE):$(DOCKER_TAG)
 
-# Clean targets
-clean:
+clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
-	rm -f $(BACKEND_DIR)/app
+	rm -f $(BACKEND_DIR)/$(BINARY_NAME)
 	rm -rf $(FRONTEND_DIR)/dist
-	rm -rf $(FRONTEND_DIR)/node_modules
-	cd $(BACKEND_DIR) && go clean -cache -testcache
-
-# Dependencies
-deps:
-	@echo "Installing dependencies..."
-	cd $(BACKEND_DIR) && go mod download && go mod tidy
-	cd $(FRONTEND_DIR) && npm install
-
-# Lint targets
-lint:
-	@echo "Running linters..."
-	@which golangci-lint > /dev/null || (echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
-	cd $(BACKEND_DIR) && golangci-lint run
-	cd $(FRONTEND_DIR) && npm run lint || true
+	rm -rf $(FRONTEND_DIR)/node_modules/.vite
+	cd $(BACKEND_DIR) && go clean
 

@@ -9,6 +9,8 @@ A production-ready React SPA with Golang backend for event registration and mana
 ├── frontend/          # React + Vite + TypeScript application
 ├── backend/           # Golang REST API
 ├── docker-compose.yml # Local development setup
+├── Dockerfile         # Multi-stage Dockerfile for production
+├── Makefile           # Build and test automation
 └── README.md
 ```
 
@@ -30,7 +32,7 @@ A production-ready React SPA with Golang backend for event registration and mana
 - Go 1.21+
 - Docker and Docker Compose (for containerized development)
 - Firebase project with Firestore enabled
-- Firebase service account JSON file
+- For Cloud Run: Google Cloud Project with Firestore API enabled
 
 ## Environment Setup
 
@@ -39,9 +41,14 @@ A production-ready React SPA with Golang backend for event registration and mana
 Create `backend/.env`:
 
 ```env
+# For local development (required)
 FIREBASE_SERVICE_ACCOUNT=/path/to/service-account.json
 # OR base64 encoded:
 # FIREBASE_SERVICE_ACCOUNT=base64:eyJ0eXAiOiJKV1QiLCJhbGc...
+
+# For Cloud Run (optional - uses ADC)
+# FIREBASE_SERVICE_ACCOUNT can be omitted
+
 SUBSCOLLECTION_ID=workshop-2024
 ADMIN_PASSWORD=your-secure-password
 PORT=8080
@@ -57,6 +64,31 @@ VITE_API_URL=http://localhost:8080
 ```
 
 ## Development
+
+### Using Makefile
+
+```bash
+# Install dependencies
+make deps
+
+# Run tests
+make test
+make test-unit
+make test-integration
+
+# Build
+make build          # Backend only
+make build-frontend # Frontend only
+make build-all      # Both
+
+# Run locally
+make run            # Backend
+make run-frontend   # Frontend
+
+# Docker
+make docker-build
+make docker-run
+```
 
 ### Using Docker Compose
 
@@ -87,23 +119,18 @@ npm run dev
 
 ## Production Build
 
-### Using Docker (Recommended)
+### Using Docker
 
 ```bash
-# Build Docker image
-make docker-build
-# or
+# Build image
 docker build -t appdirect-workshop:latest .
 
-# Run locally
-make docker-run
-# or with custom env vars
+# Run container
 docker run -p 8080:8080 \
-  -e FIREBASE_SERVICE_ACCOUNT="base64:..." \
-  -e SUBSCOLLECTION_ID="workshop-2024" \
-  -e ADMIN_PASSWORD="your-password" \
+  -e SUBSCOLLECTION_ID=workshop-2024 \
+  -e ADMIN_PASSWORD=your-password \
   -e PORT=8080 \
-  -e CORS_ORIGIN="http://localhost:8080" \
+  -e CORS_ORIGIN=https://your-domain.com \
   appdirect-workshop:latest
 ```
 
@@ -113,7 +140,7 @@ docker run -p 8080:8080 \
 
 ```bash
 cd backend
-go build -o app
+go build -o app main.go
 ./app
 ```
 
@@ -125,39 +152,84 @@ npm run build
 # Serve dist/ directory with your preferred web server
 ```
 
-## Testing
-
-See [TESTING.md](TESTING.md) for detailed testing information.
-
-```bash
-# Run all tests
-make test
-
-# Run unit tests only
-make test-unit
-
-# Run integration tests
-make test-integration
-```
-
 ## Google Cloud Run Deployment
 
-The application is ready for Cloud Run deployment:
+The application is configured to use Application Default Credentials (ADC) on Cloud Run, eliminating the need for service account files.
 
-1. Build and push Docker image to Google Container Registry or Artifact Registry
-2. Deploy to Cloud Run with environment variables:
-   - `FIREBASE_SERVICE_ACCOUNT` (base64 encoded JSON)
-   - `SUBSCOLLECTION_ID`
-   - `ADMIN_PASSWORD`
-   - `PORT` (set automatically by Cloud Run)
-   - `CORS_ORIGIN` (your Cloud Run URL)
+### Prerequisites
 
-The Dockerfile includes:
-- Multi-stage build for optimized image size
-- Frontend and backend combined in single image
-- Static file serving for SPA
-- Health check endpoint
-- Non-root user for security
+1. Google Cloud Project with Firestore API enabled
+2. Cloud Run API enabled
+3. Service account with Firestore permissions
+
+### Deployment Steps
+
+1. **Build and push Docker image:**
+
+```bash
+# Set your project ID
+export PROJECT_ID=your-project-id
+export SERVICE_NAME=appdirect-workshop
+
+# Build and push
+gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME
+
+# Or use Artifact Registry
+gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$SERVICE_NAME
+```
+
+2. **Deploy to Cloud Run:**
+
+```bash
+gcloud run deploy $SERVICE_NAME \
+  --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars SUBSCOLLECTION_ID=workshop-2024,ADMIN_PASSWORD=your-secure-password,CORS_ORIGIN=https://your-service-url.run.app \
+  --service-account your-service-account@your-project.iam.gserviceaccount.com
+```
+
+3. **Set IAM permissions:**
+
+The Cloud Run service account needs Firestore access:
+- Cloud Datastore User
+- Or custom role with Firestore read/write permissions
+
+### Environment Variables for Cloud Run
+
+- `SUBSCOLLECTION_ID` - Required: Firestore subcollection identifier
+- `ADMIN_PASSWORD` - Required: Admin dashboard password
+- `PORT` - Optional: Cloud Run sets this automatically
+- `CORS_ORIGIN` - Required: Your Cloud Run service URL
+- `GOOGLE_CLOUD_PROJECT` - Optional: Auto-detected on Cloud Run
+- `K_SERVICE` - Optional: Auto-set by Cloud Run (triggers ADC mode)
+
+**Note:** `FIREBASE_SERVICE_ACCOUNT` is NOT required on Cloud Run - the application uses Application Default Credentials automatically.
+
+## Testing
+
+### Run All Tests
+
+```bash
+make test
+```
+
+### Run Specific Test Suites
+
+```bash
+# Unit tests
+make test-unit
+
+# Integration tests
+make test-integration
+
+# Individual packages
+cd backend
+go test ./internal/handlers -v
+go test ./internal/middleware -v
+go test ./internal/config -v
+```
 
 ## Security Notes
 
@@ -165,6 +237,7 @@ The Dockerfile includes:
 - Use environment variables for all sensitive data
 - Admin password should be strong and kept secure
 - CORS origin should be configured for production
+- On Cloud Run, use IAM service accounts instead of service account files
 
 ## API Documentation
 
@@ -172,6 +245,8 @@ The Dockerfile includes:
 
 - `POST /api/register` - Register for event
 - `GET /api/registrations/count` - Get registration count
+- `GET /api/speakers` - List speakers
+- `GET /api/sessions` - List sessions
 
 ### Admin Endpoints (require authentication)
 
@@ -188,3 +263,7 @@ The Dockerfile includes:
 - `DELETE /api/admin/sessions/:id` - Delete session
 - `GET /api/admin/analytics/designations` - Get designation breakdown
 
+## Health Check
+
+The Dockerfile includes a health check endpoint:
+- `GET /api/registrations/count` - Used for container health checks

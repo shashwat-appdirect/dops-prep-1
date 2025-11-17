@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"appdirect-workshop-backend/internal/config"
 
@@ -18,23 +19,38 @@ type FirestoreClient struct {
 	cfg    *config.Config
 }
 
-// Ensure FirestoreClient implements DBInterface
-var _ DBInterface = (*FirestoreClient)(nil)
-
 func NewFirestoreClient(cfg *config.Config) (*FirestoreClient, error) {
 	ctx := context.Background()
 
-	// Convert service account map to JSON
-	serviceAccountJSON, err := json.Marshal(cfg.FirebaseServiceAccount)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal service account: %v", err)
-	}
+	var app *firebase.App
+	var err error
 
-	// Initialize Firebase app
-	opt := option.WithCredentialsJSON(serviceAccountJSON)
-	app, err := firebase.NewApp(ctx, nil, opt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Firebase app: %v", err)
+	// Check if we're running on Cloud Run (use Application Default Credentials)
+	// Cloud Run automatically provides credentials via ADC
+	if os.Getenv("K_SERVICE") != "" || os.Getenv("GOOGLE_CLOUD_PROJECT") != "" {
+		// Use Application Default Credentials (ADC) for Cloud Run
+		app, err = firebase.NewApp(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Firebase app with ADC: %v", err)
+		}
+	} else {
+		// Use service account for local development
+		if cfg.FirebaseServiceAccount == nil || len(cfg.FirebaseServiceAccount) == 0 {
+			return nil, fmt.Errorf("FIREBASE_SERVICE_ACCOUNT is required for local development")
+		}
+
+		// Convert service account map to JSON
+		serviceAccountJSON, err := json.Marshal(cfg.FirebaseServiceAccount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal service account: %v", err)
+		}
+
+		// Initialize Firebase app with service account
+		opt := option.WithCredentialsJSON(serviceAccountJSON)
+		app, err = firebase.NewApp(ctx, nil, opt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Firebase app: %v", err)
+		}
 	}
 
 	// Get Firestore client

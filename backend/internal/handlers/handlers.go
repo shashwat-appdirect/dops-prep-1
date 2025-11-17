@@ -6,11 +6,11 @@ import (
 )
 
 type Handlers struct {
-	db  database.DBInterface
+	db  database.DatabaseInterface
 	cfg *config.Config
 }
 
-func New(db database.DBInterface, cfg *config.Config) *Handlers {
+func New(db database.DatabaseInterface, cfg *config.Config) *Handlers {
 	return &Handlers{
 		db:  db,
 		cfg: cfg,
