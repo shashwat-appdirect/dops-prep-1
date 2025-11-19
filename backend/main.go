@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,9 @@ func main() {
 
 	// CORS configuration
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{cfg.CORSOrigin}
+	// Remove trailing slash from CORS origin if present
+	corsOrigin := strings.TrimSuffix(cfg.CORSOrigin, "/")
+	corsConfig.AllowOrigins = []string{corsOrigin}
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	corsConfig.AllowCredentials = true
@@ -56,8 +59,23 @@ func main() {
 	// Serve static files (frontend build)
 	staticDir := "./static"
 	if _, err := os.Stat(staticDir); err == nil {
-		r.Static("/static", staticDir)
+		// Use StaticFS with http.Dir to serve static files with proper MIME types
+		assetsPath := filepath.Join(staticDir, "assets")
+		if _, err := os.Stat(assetsPath); err == nil {
+			r.StaticFS("/assets", http.Dir(assetsPath))
+			log.Printf("Serving assets from: %s", assetsPath)
+			// Log assets directory contents for debugging
+			if entries, err := os.ReadDir(assetsPath); err == nil {
+				log.Printf("Found %d files in assets directory", len(entries))
+			}
+		} else {
+			log.Printf("Warning: Assets directory not found at: %s", assetsPath)
+		}
 		r.StaticFile("/favicon.ico", filepath.Join(staticDir, "favicon.ico"))
+		r.StaticFile("/vite.svg", filepath.Join(staticDir, "vite.svg"))
+		log.Printf("Static files directory found at: %s", staticDir)
+	} else {
+		log.Printf("Warning: Static files directory not found at: %s", staticDir)
 	}
 
 	// Public routes
@@ -88,17 +106,20 @@ func main() {
 	}
 
 	// SPA routing fallback - serve index.html for non-API routes
+	// This must be last to catch all non-API routes
 	r.NoRoute(func(c *gin.Context) {
-		// Don't serve index.html for API routes
-		if !strings.HasPrefix(c.Request.URL.Path, "/api") {
-			indexPath := filepath.Join(staticDir, "index.html")
-			if _, err := os.Stat(indexPath); err == nil {
-				c.File(indexPath)
-			} else {
-				c.JSON(404, gin.H{"error": "Not found"})
-			}
+		// Don't serve index.html for API routes or asset routes
+		if strings.HasPrefix(c.Request.URL.Path, "/api") || strings.HasPrefix(c.Request.URL.Path, "/assets") {
+			c.JSON(404, gin.H{"error": "Not found"})
+			return
+		}
+		// Serve index.html for all other routes (SPA routing)
+		indexPath := filepath.Join(staticDir, "index.html")
+		if _, err := os.Stat(indexPath); err == nil {
+			c.File(indexPath)
 		} else {
-			c.JSON(404, gin.H{"error": "API endpoint not found"})
+			log.Printf("Error: index.html not found at %s", indexPath)
+			c.JSON(404, gin.H{"error": "Frontend not found"})
 		}
 	})
 
